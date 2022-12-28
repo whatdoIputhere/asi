@@ -1,67 +1,71 @@
 const { SlashCommandBuilder } = require('discord.js');
 const index = require('../index.js');
 const axios = require('axios');
+const cooldown = 20;
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('clearchat')
         .setDescription('Deletes X amount of messages from chat or/and from specific user limited to 100 messages')
-        .addStringOption(option => option.setName('amount').setDescription('Amount of messages to delete').setRequired(false))
-        .addStringOption(option => option.setName('user').setDescription('User to delete messages from').setRequired(false)),
+        .addUserOption(option => option.setName('user').setDescription('User to delete messages from').setRequired(false))
+        .addStringOption(option => option.setName('amount').setDescription('Amount of messages to delete').setRequired(false)),
     async execute(interaction) {
         try {
-            if (index.client.cooldowns.has('clearchat')) {
+            if (index.client.cooldowns.get(interaction.guildId) == 'clearchat') {
                 console.log('chatclear run while on cooldown');
                 interaction.reply({ content: 'This command is on cooldown', ephemeral: true });
-                waitAndDelete(interaction);
+                waitAndDelete(interaction, true);
+                return;
             }
-            else {
-                console.log('chatclear run');
-                index.client.cooldowns.set('clearchat', true);
-                const targetUser = interaction.options.getString('user')?.replace(/[^0-9]/g, '') ?? 'everyone';
-                const channel = await index.client.channels.fetch(interaction.channelId);
-                const deletedMessages = [];
+            console.log('chatclear run');
+            index.client.cooldowns.set(interaction.guildId, 'clearchat');
+            const targetUser = interaction.options.getUser('user')?.id ?? 'everyone';
+            const channel = await index.client.channels.fetch(interaction.channelId);
+            const deletedMessages = [];
 
-                channel.messages.fetch({ limit: 100 }).then(async messages => {
-                    const numberOfTargetMessages = targetUser == 'everyone' ? messages.size : getNumberOfMessagesByUser(messages, targetUser);
-                    if (interaction.options.getString('amount') != null && isNaN(parseInt(interaction.options.getString('amount')))) {
-                        interaction.reply('Invalid amount');
-                        waitAndDelete(interaction);
-                        return;
-                    }
-                    const amountToDelete = interaction.options.getString('amount') != null ? parseInt(interaction.options.getString('amount')) > numberOfTargetMessages ? numberOfTargetMessages : parseInt(interaction.options.getString('amount')) : numberOfTargetMessages;
-                    if (numberOfTargetMessages == 0) {
-                        interaction.reply('No messages to clear');
-                        waitAndDelete(interaction);
-                    }
-                    else {
-                        let finished = false;
-                        await interaction.reply('Clearing chat messages');
-                        let deletedMessagescounter = 0;
-                        const messagesArray = Array.from(messages);
+            channel.messages.fetch({ limit: 100 }).then(async messages => {
+                const numberOfTargetMessages = targetUser == 'everyone' ? messages.size : getNumberOfMessagesByUser(messages, targetUser);
+                if (interaction.options.getString('amount') != null && isNaN(parseInt(interaction.options.getString('amount')))) {
+                    interaction.reply('Invalid amount');
+                    waitAndDelete(interaction);
+                    return;
+                }
+                const amountToDelete = interaction.options.getString('amount') != null ? parseInt(interaction.options.getString('amount')) > numberOfTargetMessages ? numberOfTargetMessages : parseInt(interaction.options.getString('amount')) : numberOfTargetMessages;
+                if (numberOfTargetMessages == 0) {
+                    interaction.reply('No messages to clear');
+                    waitAndDelete(interaction);
+                }
+                else {
+                    let finished = false;
+                    await interaction.reply('Clearing chat messages');
+                    let deletedMessagescounter = 0;
+                    const messagesArray = Array.from(messages);
 
-                        for (let i = 0; i < messagesArray.length; i++) {
-                            const message = messagesArray[i][1];
+                    for (let i = 0; i < messagesArray.length; i++) {
+                        const message = messagesArray[i][1];
 
-                            if (message.interaction?.id != interaction.id && (targetUser == 'everyone' || message.author.id == targetUser) && !finished) {
-                                await message.delete()
-                                    .then(msg => {
-                                        console.log(`Deleted message from ${msg.author.username}`);
-                                        deletedMessagescounter++;
+                        if (message.interaction?.id != interaction.id && (targetUser == 'everyone' || message.author.id == targetUser) && !finished) {
+                            await message.delete()
+                                .then(msg => {
+                                    console.log(`deleted message from ${msg.author.username}`);
+                                    deletedMessagescounter++;
+                                    if (message.author.bot == false) {
                                         deletedMessages.push(msg);
-                                    })
-                                    .catch(console.error);
-                                if (deletedMessagescounter == amountToDelete) {
-                                    finished = true;
-                                    interaction.editReply('Chat cleared Succesfuly');
-                                    waitAndDelete(interaction);
-                                }
+                                    }
+                                })
+                                .catch(console.error);
+                            if (deletedMessagescounter == amountToDelete) {
+                                finished = true;
+                                interaction.editReply('Chat cleared Succesfuly');
+                                waitAndDelete(interaction);
                             }
                         }
+                    }
+                    if (index.client.storeMessagesEnabled.get(interaction.guildId) == 'true' && deletedMessages.length > 0) {
                         storeMessages(deletedMessages, interaction.guildId);
                     }
-                });
-            }
+                }
+            });
         }
         catch (error) {
             await interaction.reply('Error occured');
@@ -80,13 +84,22 @@ function getNumberOfMessagesByUser(messages, targetUser) {
     return counter;
 }
 
-function waitAndDelete(interaction) {
+function waitAndDelete(interaction, onCooldown) {
+    if (!onCooldown) {
+        setTimeout(() => {
+            index.client.cooldowns.delete(interaction.guildId);
+            console.log('clearchat cooldown ended for guild ' + interaction.guildId);
+        }, cooldown * 1000);
+    }
     setTimeout(() => {
-        index.client.cooldowns.delete('clearchat');
-        console.log('clearchat cooldown ended');
-    }, 20 * 1000);
-    setTimeout(() => {
-        interaction.deleteReply();
+        interaction.deleteReply()
+            .then(() => {
+                console.log('clearchat message deleted');
+            })
+            .catch(() => {
+                console.log('clearchat message already deleted');
+            });
+
     }, 3 * 1000);
 }
 
@@ -119,11 +132,17 @@ function storeMessages(messages, guildId) {
             });
         }
     });
-    axios.post('http://localhost:4000/guild/' + guildId, messagesArray)
-        .then(res => {
-            console.log(res.data);
-        })
-        .catch(err => {
-            console.log(err.data);
-        });
+    try {
+        axios.post('http://localhost:4000/guild/storemessages/' + guildId, messagesArray)
+            .then(res => {
+                console.log(res.data);
+            })
+            .catch(err => {
+                console.log(err.data);
+            });
+    }
+    catch (error) {
+        console.log(error);
+    }
+
 }
