@@ -23,6 +23,10 @@ module.exports = {
 							index.client.storeMessagesEnabled.set(guild.guildID, guild.storeMessagesEnabled.toString());
 						}
 					});
+					index.client.apirunning = true;
+				})
+				.catch(() => {
+					console.log('Api not running');
 				});
 		}
 		catch (error) {

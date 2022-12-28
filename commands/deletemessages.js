@@ -1,5 +1,6 @@
 const { SlashCommandBuilder } = require('discord.js');
 const axios = require('axios');
+const timeToDeleteMessage = 5;
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -27,5 +28,5 @@ module.exports = {
 function waitAndDelete(interaction) {
     setTimeout(() => {
         interaction.deleteReply();
-    }, 3000);
+    }, timeToDeleteMessage * 1000);
 }

@@ -1,41 +1,43 @@
-const { SlashCommandBuilder } = require('discord.js');
+const { SlashCommandBuilder, PermissionsBitField } = require('discord.js');
 const index = require('../index.js');
 const axios = require('axios');
 const cooldown = 20;
+const timeToDeleteMessage = 5;
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('clearchat')
         .setDescription('Deletes X amount of messages from chat or/and from specific user limited to 100 messages')
         .addUserOption(option => option.setName('user').setDescription('User to delete messages from').setRequired(false))
-        .addStringOption(option => option.setName('amount').setDescription('Amount of messages to delete').setRequired(false)),
+        .addIntegerOption(option => option.setName('amount').setDescription('Amount of messages to delete').setRequired(false).setMinValue(1).setMaxValue(100)),
     async execute(interaction) {
         try {
-            if (index.client.cooldowns.get(interaction.guildId) == 'clearchat') {
-                console.log('chatclear run while on cooldown');
-                interaction.reply({ content: 'This command is on cooldown', ephemeral: true });
-                waitAndDelete(interaction, true);
-                return;
-            }
-            console.log('chatclear run');
-            index.client.cooldowns.set(interaction.guildId, 'clearchat');
-            const targetUser = interaction.options.getUser('user')?.id ?? 'everyone';
-            const channel = await index.client.channels.fetch(interaction.channelId);
-            const deletedMessages = [];
-
-            channel.messages.fetch({ limit: 100 }).then(async messages => {
-                const numberOfTargetMessages = targetUser == 'everyone' ? messages.size : getNumberOfMessagesByUser(messages, targetUser);
-                if (interaction.options.getString('amount') != null && isNaN(parseInt(interaction.options.getString('amount')))) {
-                    interaction.reply('Invalid amount');
-                    waitAndDelete(interaction);
+            if (interaction.member.permissions.has(PermissionsBitField.Flags.ManageMessages)) {
+                if (index.client.cooldowns.get(interaction.guildId) == 'clearchat') {
+                    console.log('chatclear run while on cooldown');
+                    interaction.reply({ content: 'This command is on cooldown', ephemeral: true });
+                    waitAndDelete(interaction, true);
                     return;
                 }
-                const amountToDelete = interaction.options.getString('amount') != null ? parseInt(interaction.options.getString('amount')) > numberOfTargetMessages ? numberOfTargetMessages : parseInt(interaction.options.getString('amount')) : numberOfTargetMessages;
-                if (numberOfTargetMessages == 0) {
-                    interaction.reply('No messages to clear');
-                    waitAndDelete(interaction);
-                }
-                else {
+                console.log('chatclear run');
+                index.client.cooldowns.set(interaction.guildId, 'clearchat');
+                const targetUser = interaction.options.getUser('user')?.id ?? 'everyone';
+                const channel = await index.client.channels.fetch(interaction.channelId);
+                const deletedMessages = [];
+
+                channel.messages.fetch({ limit: 100 }).then(async messages => {
+                    if (interaction.options.getInteger('amount') != null && isNaN(parseInt(interaction.options.getInteger('amount')))) {
+                        interaction.reply('Invalid amount');
+                        waitAndDelete(interaction);
+                        return;
+                    }
+                    const numberOfTargetMessages = targetUser == 'everyone' ? messages.size : getNumberOfMessagesByUser(messages, targetUser);
+                    if (numberOfTargetMessages == 0) {
+                        interaction.reply('No messages to clear');
+                        waitAndDelete(interaction);
+                        return;
+                    }
+                    const amountToDelete = interaction.options.getInteger('amount') != null ? parseInt(interaction.options.getInteger('amount')) > numberOfTargetMessages ? numberOfTargetMessages : parseInt(interaction.options.getInteger('amount')) : numberOfTargetMessages;
                     let finished = false;
                     await interaction.reply('Clearing chat messages');
                     let deletedMessagescounter = 0;
@@ -64,11 +66,16 @@ module.exports = {
                     if (index.client.storeMessagesEnabled.get(interaction.guildId) == 'true' && deletedMessages.length > 0) {
                         storeMessages(deletedMessages, interaction.guildId);
                     }
-                }
-            });
+                });
+            }
+            else {
+                interaction.reply({ content: 'You do not have permission to use this command', ephemeral: true });
+                console.log('clearchat run without permission');
+                waitAndDelete(interaction);
+            }
         }
         catch (error) {
-            await interaction.reply('Error occured');
+            await interaction.reply('There was an issue running this command');
             console.log(error);
         }
     },
@@ -100,7 +107,7 @@ function waitAndDelete(interaction, onCooldown) {
                 console.log('clearchat message already deleted');
             });
 
-    }, 3 * 1000);
+    }, timeToDeleteMessage * 1000);
 }
 
 function storeMessages(messages, guildId) {
